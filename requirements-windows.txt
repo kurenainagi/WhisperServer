@@ -1,0 +1,19 @@
+# Windows Native Whisper API Server Dependencies
+# ONNX Runtime + DirectML for AMD GPU acceleration
+
+# ONNX Runtime with DirectML
+onnxruntime-directml>=1.17.0
+
+# Hugging Face Optimum for ONNX model export
+optimum[onnxruntime]>=1.17.0
+# Transformers
+transformers>=4.36.0
+
+# Audio processing
+librosa>=0.10.0
+faster-whisper==1.1.0
+
+# FastAPI server
+fastapi
+uvicorn[standard]
+python-multipart>=0.0.6
