@@ -42,8 +42,7 @@ Write-Host "  GPU: $(if ($GPU) { 'enabled (CUDA)' } else { 'disabled (CPU INT8)'
 Write-Host "  Port: $Port" -ForegroundColor White
 Write-Host ""
 
-# サーバー起動
-$reloadFlag = if ($Reload) { "--reload" } else { "" }
+# サーバー起動 (Reloadフラグは下で使用)
 Write-Host "Starting server..." -ForegroundColor Green
 Write-Host "API: http://127.0.0.1:$Port" -ForegroundColor Cyan
 Write-Host "Health: http://127.0.0.1:$Port/health" -ForegroundColor Cyan
