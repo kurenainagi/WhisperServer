@@ -1,20 +1,18 @@
 """
 Azure OpenAI Whisper API 互換サーバー
-Windows Native + ONNX Runtime DirectML
+マルチモデル対応版 (Kotoba-Whisper + ReazonSpeech)
 """
 import os
-import uuid
-import shutil
 import logging
-import tempfile
-from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
-from .transcriber import init_transcriber, get_transcriber
+from .model_registry import get_registry, MODEL_ALIASES
+from .transcriber import WhisperTranscriber
+from .reazonspeech_transcriber import ReazonSpeechTranscriber
 
 # ロギング設定
 logging.basicConfig(
@@ -28,59 +26,65 @@ logger = logging.getLogger("whisper-api")
 async def lifespan(app: FastAPI):
     """アプリケーションの起動・終了処理"""
     logger.info("=" * 50)
-    logger.info("Starting Whisper API Server (Windows Native)")
+    logger.info("Starting Multi-Model ASR Server")
     logger.info("=" * 50)
     
-    # 環境変数から設定を取得
-    model_size = os.getenv("WHISPER_MODEL", "RoachLin/kotoba-whisper-v2.2-faster")
-    use_gpu = os.getenv("USE_GPU", "0") == "1" # Default to CPU
-    cache_dir = os.getenv("MODEL_CACHE_DIR", None)
+    registry = get_registry()
     
-    logger.info(f"Configuration:")
-    logger.info(f"  Model: {model_size}")
-    logger.info(f"  GPU: {'enabled' if use_gpu else 'disabled'}")
-    logger.info(f"  Cache: {cache_dir or 'default'}")
-    
+    # Kotoba-Whisper をロード
     try:
-        init_transcriber(
-            model_size=model_size,
-            use_gpu=use_gpu,
-            cache_dir=cache_dir
+        logger.info("Loading Kotoba-Whisper (faster-whisper)...")
+        kotoba = WhisperTranscriber(
+            model_size=os.getenv("WHISPER_MODEL", "RoachLin/kotoba-whisper-v2.2-faster"),
+            use_gpu=os.getenv("USE_GPU", "0") == "1"
         )
-        transcriber = get_transcriber()
-        logger.info(f"  Device: {transcriber.device}")
-        logger.info(f"  Compute: {transcriber.compute_type}")
-        logger.info("=" * 50)
+        registry.register("kotoba-whisper", kotoba)
     except Exception as e:
-        logger.critical(f"Failed to initialize Whisper: {e}")
-        raise
+        logger.error(f"Failed to load Kotoba-Whisper: {e}")
+    
+    # ReazonSpeech をロード
+    try:
+        logger.info("Loading ReazonSpeech (k2-asr)...")
+        reazon = ReazonSpeechTranscriber()
+        registry.register("reazonspeech", reazon)
+    except Exception as e:
+        logger.warning(f"ReazonSpeech not available: {e}")
+    
+    logger.info("=" * 50)
+    logger.info(f"Available models: {registry.available_models}")
+    logger.info("=" * 50)
     
     yield
     
-    logger.info("Shutting down Whisper API Server...")
+    logger.info("Shutting down ASR Server...")
 
 
 app = FastAPI(
-    title="Local Azure OpenAI Whisper API",
-    description="Azure OpenAI Whisper API互換のローカルサーバー (ONNX Runtime + DirectML)",
-    version="1.0.0",
+    title="Multi-Model ASR API",
+    description="""
+## Azure OpenAI Whisper API 互換のローカル音声認識サーバー
+
+### 利用可能なモデル
+- **whisper-1** / **kotoba-whisper**: Kotoba-Whisper v2.2 (高精度、日本語特化)
+- **reazonspeech** / **reazonspeech-k2**: ReazonSpeech K2 (超高速、159Mパラメータ)
+
+### 使用例
+```
+POST /openai/deployments/whisper-1/audio/transcriptions      # Kotoba-Whisper
+POST /openai/deployments/reazonspeech/audio/transcriptions   # ReazonSpeech
+```
+    """,
+    version="2.0.0",
     lifespan=lifespan
 )
 
 
 async def verify_api_key(api_key: Optional[str] = Header(None, alias="api-key")):
-    """
-    Azure OpenAI互換のAPIキー認証 (ローカル用: 空でなければOK)
-    """
+    """Azure OpenAI互換のAPIキー認証 (ローカル用: 空でなければOK)"""
     if not api_key:
         raise HTTPException(
             status_code=401,
-            detail={
-                "error": {
-                    "code": "401",
-                    "message": "Access denied due to missing api-key header."
-                }
-            }
+            detail={"error": {"code": "401", "message": "Missing api-key header."}}
         )
     return api_key
 
@@ -95,81 +99,68 @@ async def create_transcription(
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Azure OpenAI Whisper API 互換エンドポイント
+    音声ファイルを文字起こし (Azure OpenAI Whisper API 互換)
     
-    - deployment_id: デプロイメント名 (任意の値を受け付け)
-    - file: 音声ファイル (mp3, wav, m4a, etc.)
-    - language: 言語コード (ja, en, etc.)
-    - prompt: 初期プロンプト (現在未サポート)
-    - response_format: json または verbose_json
+    - **deployment_id**: モデル選択 (`whisper-1`, `kotoba-whisper`, `reazonspeech`, `reazonspeech-k2`)
+    - **file**: 音声ファイル (mp3, wav, m4a, etc.)
+    - **language**: 言語コード (ja, en, etc.) - Kotoba-Whisperのみ有効
+    - **response_format**: `json` または `verbose_json`
     """
-    try:
-        transcriber = get_transcriber()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+    registry = get_registry()
     
-    
-    # 以前の一時ファイルロジックを廃止し、ストリームを直接渡す
     try:
-        # ファイルポインタを先頭に戻す (念のため)
+        transcriber = registry.get(deployment_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    
+    try:
         await file.seek(0)
         
         logger.info(
-            f"Request: deployment={deployment_id}, "
-            f"file={file.filename}, language={language}, format={response_format}"
+            f"Request: model={deployment_id} -> {transcriber.model_size}, "
+            f"file={file.filename}, language={language}"
         )
         
-        # 実際に文字起こし
         result = transcriber.transcribe(
             audio_path=file.file,
-            language=language or "ja", # デフォルトはモデルに合わせて日本語
+            language=language or "ja",
             prompt=prompt,
             response_format=response_format
         )
         
-        logger.info(f"Result: {result.get('text', '')[:100]}...")
+        logger.info(f"Result: {result.get('text', '')[:80]}...")
         return JSONResponse(content=result)
         
     except Exception as e:
         logger.error(f"Transcription error: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={
-                "error": {
-                    "code": "InternalServerError",
-                    "message": str(e)
-                }
-            }
+            content={"error": {"code": "InternalServerError", "message": str(e)}}
         )
+
 
 @app.get("/health")
 async def health_check():
-    """ヘルスチェックエンドポイント"""
-    try:
-        transcriber = get_transcriber()
-        return {
-            "status": "ok",
-            "model_loaded": True,
-            "model": transcriber.model_size,
-            "device": transcriber.device,
-            "compute_type": transcriber.compute_type,
-            "gpu_enabled": transcriber.is_gpu_enabled
-        }
-    except RuntimeError:
-        return {
-            "status": "degraded",
-            "model_loaded": False
-        }
+    """ヘルスチェック & モデル一覧"""
+    registry = get_registry()
+    return {
+        "status": "ok",
+        "available_models": registry.list_models(),
+        "default_model": registry.default_model,
+        "model_aliases": MODEL_ALIASES
+    }
 
 
 @app.get("/")
 async def root():
     """ルートエンドポイント"""
     return {
-        "service": "Local Azure OpenAI Whisper API",
-        "version": "1.0.0",
+        "service": "Multi-Model ASR API",
+        "version": "2.0.0",
         "endpoints": {
-            "transcription": "/openai/deployments/{deployment_id}/audio/transcriptions",
-            "health": "/health"
-        }
+            "transcription": "/openai/deployments/{model}/audio/transcriptions",
+            "health": "/health",
+            "docs": "/docs"
+        },
+        "models": ["whisper-1", "reazonspeech"]
     }

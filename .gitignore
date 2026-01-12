@@ -29,4 +29,6 @@ models/
 # OS generated
 Thumbs.db
 Desktop.ini
-.DS_Store
+
+# Benchmark
+benchmark/

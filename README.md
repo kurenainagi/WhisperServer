@@ -1,89 +1,60 @@
-# Windows Native Whisper Server (Optimized)
+# Multi-Model ASR Server
 
-AMD Ryzen AI (780M) 搭載PC向けの、高速・高精度な音声認識APIサーバーです。
-`faster-whisper` エンジンと日本語特化モデル `kotoba-whisper-v2.2` を使用し、Windows上で直接動作するように最適化されています。
+高速・高精度な日本語音声認識APIサーバー。
+**Kotoba-Whisper** と **ReazonSpeech** の2つのモデルをサポート。
 
 ## 特徴
-- **爆速**: 24秒の音声を **約6.75秒** で処理 (実時間の約3.5倍速)。
-- **高精度**: `kotoba-whisper-v2.2` (Large-v3ベース) により、日本語の専門用語や言い回しも正確に認識。
-- **Azure OpenAI互換**: `whisper-1` 互換のAPIエンドポイントを提供。既存のアプリやツールからそのまま利用可能。
-- **軽量**: Docker不要。Windows上でネイティブ動作します。
+| モデル | 速度 (24秒音声) | パラメータ | 特徴 |
+|--------|----------------|-----------|------|
+| **ReazonSpeech** | ~1.6秒 | 159M | 超高速・軽量 |
+| **Kotoba-Whisper** | ~6.8秒 | 1.5B | 高精度 |
 
 ---
 
-## 使い方 (How to Use)
+## 使い方
 
-### 1. サーバーの起動
-フォルダ内の **`start_server.bat`** をダブルクリックしてください。
-サーバーが起動し、以下のような画面が表示されれば準備完了です。
-
+### 1. サーバー起動
 ```
-INFO:whisper-api:  Device: cpu
-INFO:whisper-api:  Compute: int8
-INFO:     Uvicorn running on http://127.0.0.1:8000
+start_server.bat をダブルクリック
 ```
 
-> **Note**: 初回起動時はセットアップ（仮想環境作成やモジュールインストール）が自動的に行われるため、数分かかる場合があります。
+### 2. APIリクエスト
 
-### 2. 動作確認 (ベンチマーク)
-起動した状態で、別のターミナルから以下を実行すると速度を計測できます。
-```powershell
-.\.venv\Scripts\python.exe benchmark.py
-```
-
-### 3. APIの利用方法 (クライアントから呼ぶ場合)
-サーバーは `http://127.0.0.1:8000` で待機しています。
-
-**Curlの例:**
+**ReazonSpeech (高速):**
 ```bash
-curl -X POST "http://127.0.0.1:8000/openai/deployments/whisper-1/audio/transcriptions" ^
-  -H "Content-Type: multipart/form-data" ^
-  -F "file=@audio.mp3" ^
-  -F "language=ja"
+curl -X POST "http://127.0.0.1:8000/openai/deployments/reazonspeech/audio/transcriptions" \
+  -H "api-key: test" -F "file=@audio.mp3"
 ```
 
-**Pythonの例:**
-```python
-import requests
-
-with open("audio.mp3", "rb") as f:
-    response = requests.post(
-        "http://127.0.0.1:8000/openai/deployments/whisper-1/audio/transcriptions",
-        files={"file": f},
-        data={"language": "ja"}
-    )
-print(response.json())
+**Kotoba-Whisper (高精度):**
+```bash
+curl -X POST "http://127.0.0.1:8000/openai/deployments/whisper-1/audio/transcriptions" \
+  -H "api-key: test" -F "file=@audio.mp3"
 ```
+
+### 3. API仕様書
+サーバー起動後、ブラウザで http://127.0.0.1:8000/docs にアクセス
 
 ---
 
-## インストール手順 (手動セットアップする場合)
-リポジトリを新規にCloneした場合などは、自動セットアップだけでなく手動コマンドも利用できます。
+## エンドポイント
 
-1. **セットアップ** (初回のみ):
-   ```powershell
-   .\setup.ps1
-   ```
-2. **起動**:
-   ```powershell
-   .\run.ps1
-   ```
-   ※ `.ps1` ファイルが実行できない場合は、`start_server.bat` を使用するか、PowerShellで `Set-ExecutionPolicy RemoteSigned` 等を実行して権限を変更してください。
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/openai/deployments/{model}/audio/transcriptions` | 音声認識 |
+| GET | `/health` | ヘルスチェック & モデル一覧 |
+| GET | `/docs` | Swagger UI |
+
+### モデル名エイリアス
+- `whisper-1`, `kotoba-whisper`, `kotoba` → Kotoba-Whisper
+- `reazonspeech`, `reazonspeech-k2`, `reazon` → ReazonSpeech
 
 ---
 
-## 動作環境
-- **OS**: Windows 10 / 11
-- **CPU**: AMD Ryzen (AVX-512/AMX対応推奨) または Intel CPU
-- **Python**: 3.10 以上 (インストーラーでPATHを通しておくこと)
-- **FFmpeg**: インストール済みであること (パスが通っている、またはWinGetで導入可能であること)
+## インストール
+```powershell
+.\setup.ps1
+```
 
-## ディレクトリ構成
-- `app/`: サーバーのソースコード
-- `start_server.bat`: 起動用ランチャー
-- `run.ps1`: 起動スクリプト (PowerShell版)
-- `setup.ps1`: 環境構築スクリプト
-- `requirements-windows.txt`: 必要なPythonライブラリ
-
-## アーキテクチャ詳細
-詳細は [ARCHITECTURE.md](ARCHITECTURE.md) を参照してください。
+## 詳細
+- [ARCHITECTURE.md](ARCHITECTURE.md) - システム設計
