@@ -1,60 +1,94 @@
-# Multi-Model ASR Server
+# WhisperServer (Multi-Model ASR API)
 
-高速・高精度な日本語音声認識APIサーバー。
-**Kotoba-Whisper** と **ReazonSpeech** の2つのモデルをサポート。
+Azure OpenAI互換のAPIを提供する、高速・高精度な日本語音声認識サーバー。
+**Kotoba-Whisper** (高精度) と **ReazonSpeech** (超高速) の2つのモデルをサポートし、用途に応じて切り替え可能です。
+
+## 前提条件 (Prerequisites)
+
+- **OS**: Windows 10/11 (推奨), WSL2, Linux
+- **Python**: 3.10 以上 (3.11 推奨)
+- **FFmpeg**: 
+  - 必須ではありませんが、多様な音声フォーマット対応のためにインストールを推奨します。
+  - Windowsの場合: `PATH` に ffmpeg.exe が通っていること。
 
 ## 特徴
-| モデル | 速度 (24秒音声) | パラメータ | 特徴 |
-|--------|----------------|-----------|------|
-| **ReazonSpeech** | ~1.6秒 | 159M | 超高速・軽量 |
-| **Kotoba-Whisper** | ~6.8秒 | 1.5B | 高精度 |
+| モデル | 速度 (24秒音声) | 特徴 | 推奨用途 |
+|--------|----------------|------|----------|
+| **ReazonSpeech** (k2-v2) | **~1.5秒** | **超高速**・軽量 (159M) | リアルタイム対話、大量バッチ処理 |
+| **Kotoba-Whisper** (v2.0) | ~6.9秒 | **高精度**・文脈理解 (1.5B) | 議事録作成、複雑な文脈の認識 |
+
+---
+
+## インストール
+
+1. **リポジリのクローン**
+   ```powershell
+   git clone <repository-url>
+   cd WhisperServer
+   ```
+
+2. **セットアップ**
+   自動セットアップスクリプトを実行します（仮想環境作成と依存関係インストール）。
+   ```powershell
+   .\setup.ps1
+   ```
+   または手動で:
+   ```bash
+   python -m venv .venv
+   .\.venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
 
 ---
 
 ## 使い方
 
 ### 1. サーバー起動
+```powershell
+.\run.ps1
 ```
-start_server.bat をダブルクリック
+または
+```powershell
+start_server.bat
 ```
+サーバーは `http://127.0.0.1:8000` で起動します。
+初回起動時にモデルファイルが自動ダウンロードされます（数GB）。
 
 ### 2. APIリクエスト
 
-**ReazonSpeech (高速):**
+APIは Azure OpenAI Whisperモデルの形式 (`POST /openai/deployments/{model}/audio/transcriptions`) に準拠しています。 URLの `{model}` 部分でエンジンを切り替えます。
+
+#### A) ReazonSpeech (高速モード)
 ```bash
 curl -X POST "http://127.0.0.1:8000/openai/deployments/reazonspeech/audio/transcriptions" \
-  -H "api-key: test" -F "file=@audio.mp3"
+  -H "api-key: test" \
+  -F "file=@audio.mp3" \
+  -F "language=ja"
 ```
 
-**Kotoba-Whisper (高精度):**
+#### B) Kotoba-Whisper (高精度モード)
 ```bash
 curl -X POST "http://127.0.0.1:8000/openai/deployments/whisper-1/audio/transcriptions" \
-  -H "api-key: test" -F "file=@audio.mp3"
+  -H "api-key: test" \
+  -F "file=@audio.mp3" \
+  -F "language=ja"
 ```
 
-### 3. API仕様書
-サーバー起動後、ブラウザで http://127.0.0.1:8000/docs にアクセス
+### 3. APIドキュメント
+詳細な仕様はSwagger UIで確認できます。
+- URL: http://127.0.0.1:8000/docs
 
 ---
 
-## エンドポイント
+## 付録: ベンチマーク結果
+Windows 11 (Ryzen 7 7840HS) での計測結果:
 
-| メソッド | パス | 説明 |
-|---------|------|------|
-| POST | `/openai/deployments/{model}/audio/transcriptions` | 音声認識 |
-| GET | `/health` | ヘルスチェック & モデル一覧 |
-| GET | `/docs` | Swagger UI |
+| テスト音声 | ReazonSpeech | Kotoba-Whisper | 速度差 |
+|------------|--------------|----------------|--------|
+| 短い音声 (MP3) | 1.52s | 6.88s | **4.5x** |
+| 長い音声 (MP3) | 2.64s | 12.02s | **4.5x** |
 
-### モデル名エイリアス
-- `whisper-1`, `kotoba-whisper`, `kotoba` → Kotoba-Whisper
-- `reazonspeech`, `reazonspeech-k2`, `reazon` → ReazonSpeech
+※ ReazonSpeechは `soundfile` によるネイティブデコード最適化済み。
 
----
-
-## インストール
-```powershell
-.\setup.ps1
-```
-
-## 詳細
-- [ARCHITECTURE.md](ARCHITECTURE.md) - システム設計
+## システム設計
+詳細は [ARCHITECTURE.md](ARCHITECTURE.md) を参照してください。
